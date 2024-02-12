@@ -1,0 +1,49 @@
+with full_data as (select
+si.st_id as st_id
+,p.correct as correct
+,p.subject as solved_subject
+,si.test_grp as test_grp
+,fpc.money as money
+,fpc.subject as bought_subject
+from  peas as p 
+left join studs as si on p.st_id =si.st_id 
+left join final_project_check as fpc on p.st_id =fpc.st_id and solved_subject=bought_subject),
+cte as (select distinct on (test_grp, st_id)
+test_grp
+,st_id
+,sum(money) over(partition by test_grp, st_id) as sm
+from full_data) 
+,bought_id as (select distinct st_id from cte where sm>0) -- купили
+,bought_math as (select distinct st_id from final_project_check where subject='Math') -- купили математику
+,active_st_id as (select distinct st_id from peas where correct=1 group by st_id having count(subject) > 10) --id of active users
+,active_math_st_id as (select distinct st_id from peas where correct=1 and subject = 'Math' group by st_id having count(subject) >= 2) --id of active math users
+,revenue_per_id as (select st_id, sum(money) as revenue from final_project_check group by st_id) -- сколько принес пользователь
+,total_revenue_for_test as (select studs.test_grp, sum(rpi.revenue) as total_revenue 
+from studs inner join revenue_per_id rpi using st_id group by test_grp) -- выручка в разрезе группы пользователей
+,c1 as (select test_grp, count(*) as cnt from cte where sm=0 group by test_grp) -- не купили
+,c2 as (select test_grp, count(*) as cnt from cte  where sm>0 group by test_grp) -- купили
+,c3 as (select test_grp, count(distinct st_id) as cnt from cte  group by test_grp) -- каунт уникальных пользователей
+,c4 as (select test_grp, count(*) as cnt from cte inner join active_st_id using st_id where sm > 0 group by test_grp) -- купили и активны
+,c5 as (select test_grp, count(*) as cnt from cte inner join active_st_id using st_id group by test_grp) -- активны
+,c6 as (select test_grp, count(*) as cnt from cte inner join active_math_st_id using st_id group by test_grp) -- active in group in math
+,c7 as (select test_grp, count(*) as cnt from cte 
+inner join active_math_st_id amsi on cte.st_id = amsi.st_id 
+inner join bought_math bm on cte.st_id = bm.st_id 
+group by test_grp)
+,metrics as (
+select 
+c1.test_grp
+,c2.cnt/c1.cnt as cr -- cr = отношение купивших ко всем пользователям
+,c4.cnt/c5.cnt as cr_active -- cr_active отношение активных и купивших ко всем активным пользователям
+,c7.cnt/c6.cnt as cr_active_math -- cr_active_math отношение активных по математике к купившим курс по математике
+,c8.total_revenue/c2.cnt as arppu 
+,cr*arppu as arpu
+from 
+c1 join c2 on c1.test_grp=c2.test_grp
+join c4 on c1.test_grp=c4.test_grp
+join c5 on c1.test_grp=c5.test_grp
+join c6 on c1.test_grp=c6.test_grp
+join c7 on c1.test_grp=c7.test_grp
+join total_revenue_for_test c8 on c1.test_grp=c8.test_grp
+)
+select * from metrics
